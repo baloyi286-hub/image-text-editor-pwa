@@ -11,6 +11,7 @@ export default function App(){
  useEffect(()=>{if(!element.current)return;const c=new Canvas(element.current,{width:960,height:540,backgroundColor:'#202c28',preserveObjectStacking:true});editor.current=c;
  const sync=()=>{const o=c.getActiveObject();if(o instanceof IText){setSelected(o);setValue(o.text||'');setColor(typeof o.fill==='string'?o.fill:'#ffffff');setFont(o.fontFamily||'Arial');setSize(o.fontSize||36);setOpacity(Math.round((o.opacity||1)*100));setAngle(o.angle||0)}else setSelected(null)};
  c.on('selection:created',sync);c.on('selection:updated',sync);c.on('selection:cleared',sync);
+ c.on('mouse:dblclick',event=>{const target=event.target;if(target instanceof IText){c.setActiveObject(target);target.enterEditing();target.selectAll();target.hiddenTextarea?.focus();c.requestRenderAll()}});
  const changed=()=>save();c.on('object:modified',changed);c.on('text:changed',changed);c.on('object:added',changed);c.on('object:removed',changed);
  return()=>{editor.current=null;void c.dispose()}},[]);
  function save(){const c=editor.current;if(!c||restoring.current)return;const snapshot=JSON.stringify(c.toJSON());if(historyRef.current[indexRef.current]===snapshot)return;const next=[...historyRef.current.slice(0,indexRef.current+1),snapshot].slice(-35);historyRef.current=next;indexRef.current=next.length-1;setHistory(next);setHistoryIndex(indexRef.current)}
@@ -79,7 +80,7 @@ export default function App(){
    const appearance=sampleAppearance(d);fill=appearance.foreground;
    restoreBackground(d);
  }
- const t=new IText(d?.text||'Your text',{left:d?.left??c.width/4,top:d?.top??c.height/3,fontFamily:'Arial',fontSize:d?Math.max(8,Math.min(120,d.height*.9)):36,fill,strokeWidth:0});
+ const t=new IText(d?.text||'Your text',{editable:true,stroke:d?'#111111':undefined,strokeWidth:d?Math.max(0.7,d.height*.025):0,paintFirst:'stroke',left:d?.left??c.width/4,top:d?.top??c.height/3,fontFamily:'Arial',fontSize:d?Math.max(8,Math.min(120,d.height*.9)):36,fill,strokeWidth:0});
  if(d&&t.width&&d.width>0){t.set({scaleX:d.width/t.width});}
  c.add(t);c.setActiveObject(t);c.renderAll();setSelected(t);setValue(t.text||'');save();
  }
@@ -105,16 +106,33 @@ export default function App(){
    });
    // Tesseract.js v5 does not include word boxes unless explicitly requested.
    const result=await worker.recognize(imageData);
+   const lines=result.data.lines||[];
    const words=result.data.words||[];
    const sx=c.width/img.naturalWidth,sy=c.height/img.naturalHeight;
    let n=0;
-   for(const word of words){
-     const b=word.bbox;
-     if(!word.text.trim()||word.confidence<45)continue;
-     addText({text:word.text,left:b.x0*sx,top:b.y0*sy,width:(b.x1-b.x0)*sx,height:(b.y1-b.y0)*sy});
-     n++;
+   if(lines.length){
+     for(const line of lines){
+       if(!line.text.trim()||line.confidence<35)continue;
+       const b=line.bbox;
+       addText({text:line.text.trim(),left:b.x0*sx,top:b.y0*sy,width:(b.x1-b.x0)*sx,height:(b.y1-b.y0)*sy});
+       n++;
+     }
+   }else{
+     // Fallback: combine nearby OCR words into lines rather than separate letter objects.
+     const groups:typeof words[]=[];
+     for(const word of words.filter(w=>w.text.trim()&&w.confidence>=45).sort((a,b)=>a.bbox.y0-b.bbox.y0||a.bbox.x0-b.bbox.x0)){
+       const center=(word.bbox.y0+word.bbox.y1)/2;
+       let group=groups.find(g=>g.length&&Math.abs((g[0].bbox.y0+g[0].bbox.y1)/2-center)<Math.max(8,(word.bbox.y1-word.bbox.y0)*.5));
+       if(!group){group=[];groups.push(group)}group.push(word);
+     }
+     for(const group of groups){
+       group.sort((a,b)=>a.bbox.x0-b.bbox.x0);
+       const x0=Math.min(...group.map(w=>w.bbox.x0)),y0=Math.min(...group.map(w=>w.bbox.y0));
+       const x1=Math.max(...group.map(w=>w.bbox.x1)),y1=Math.max(...group.map(w=>w.bbox.y1));
+       addText({text:group.map(w=>w.text).join(' '),left:x0*sx,top:y0*sy,width:(x1-x0)*sx,height:(y1-y0)*sy});n++;
+     }
    }
-   setMessage(n? n+' editable OCR text layers created. Original lettering is replaced using surrounding image pixels. Select any replacement to edit it.':'OCR completed, but no sufficiently clear words were found.');
+   setMessage(n? n+' editable OCR text layers created. Original lettering is replaced using surrounding image pixels. Double-click a word or line to edit it directly with a cursor.':'OCR completed, but no sufficiently clear words were found.');
  }catch(error){
    console.error('PixelType OCR failure:',error);
    setMessage('OCR failed: '+(error instanceof Error?error.message:String(error)));
