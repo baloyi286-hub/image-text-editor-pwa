@@ -11,6 +11,7 @@ export default function App(){
  useEffect(()=>{if(!element.current)return;const c=new Canvas(element.current,{width:960,height:540,backgroundColor:'#202c28',preserveObjectStacking:true});editor.current=c;
  const sync=()=>{const o=c.getActiveObject();if(o instanceof IText){setSelected(o);setValue(o.text||'');setColor(typeof o.fill==='string'?o.fill:'#ffffff');setFont(o.fontFamily||'Arial');setSize(o.fontSize||36);setOpacity(Math.round((o.opacity||1)*100));setAngle(o.angle||0)}else setSelected(null)};
  c.on('selection:created',sync);c.on('selection:updated',sync);c.on('selection:cleared',sync);
+ c.on('mouse:down',event=>{const target=event.target;if(target instanceof Rect && (target as Rect & {ocrText?:string}).ocrText){const region=target as Rect & {ocrText?:string;ocrDetection?:Detection};if(!region.ocrDetection)return;const detection=region.ocrDetection;c.remove(region);const t=createReplacement(detection);t.enterEditing();t.selectAll();t.hiddenTextarea?.focus();c.requestRenderAll();}});
  c.on('mouse:dblclick',event=>{const target=event.target;if(target instanceof IText){c.setActiveObject(target);target.enterEditing();target.selectAll();target.hiddenTextarea?.focus();c.requestRenderAll()}});
  const changed=()=>save();c.on('object:modified',changed);c.on('text:changed',changed);c.on('object:added',changed);c.on('object:removed',changed);
  return()=>{editor.current=null;void c.dispose()}},[]);
@@ -73,17 +74,33 @@ export default function App(){
  const layer=new FabricImage(patch,{left,top,selectable:false,evented:false});
  c.add(layer);
  }
+ function createReplacement(d:Detection){
+ const c=editor.current!;
+ const appearance=sampleAppearance(d);
+ // Only the clicked OCR region is changed. For flat-colour graphics, a
+ // uniform cover avoids sampling characters from unrelated nearby artwork.
+ const pad=Math.max(1,Math.min(3,d.height*.035));
+ const cover=new Rect({left:Math.max(0,d.left-pad),top:Math.max(0,d.top-pad),width:d.width+pad*2,height:d.height+pad*2,fill:appearance.background,selectable:false,evented:false});
+ c.add(cover);
+ const white=appearance.foreground.toLowerCase()==='#ffffff';
+ const t=new IText(d.text,{left:d.left,top:d.top- Math.max(0,d.height*.06),fontFamily:'Arial',fontWeight:'bold',fontSize:Math.max(10,d.height*.99),fill:white?'#ffffff':appearance.foreground,stroke:'#111111',strokeWidth:Math.max(1,d.height*.035),paintFirst:'stroke',strokeUniform:true,editable:true});
+ if(t.width&&d.width>0)t.set({scaleX:d.width/t.width});
+ c.add(t);c.setActiveObject(t);c.requestRenderAll();setSelected(t);setValue(t.text||'');save();return t;
+ }
  function addText(d?:Detection){
  const c=editor.current;if(!c||!loaded)return;
- let fill='#ffffff';
- if(d){
-   const appearance=sampleAppearance(d);fill=appearance.foreground;
-   restoreBackground(d);
+ if(d){createReplacement(d);return}
+ const t=new IText('Your text',{left:c.width/4,top:c.height/3,fontFamily:'Arial',fontSize:36,fill:'#ffffff',editable:true});
+ c.add(t);c.setActiveObject(t);c.requestRenderAll();setSelected(t);setValue(t.text||'');save();
  }
- const t=new IText(d?.text||'Your text',{editable:true,stroke:d?'#111111':undefined,strokeWidth:d?Math.max(0.7,d.height*.025):0,paintFirst:'stroke',left:d?.left??c.width/4,top:d?.top??c.height/3,fontFamily:'Arial',fontSize:d?Math.max(8,Math.min(120,d.height*.9)):36,fill});
- if(d&&t.width&&d.width>0){t.set({scaleX:d.width/t.width});}
- c.add(t);c.setActiveObject(t);c.renderAll();setSelected(t);setValue(t.text||'');save();
+ function markText(d:Detection){
+ const c=editor.current!;
+ const region=new Rect({left:d.left,top:d.top,width:Math.max(8,d.width),height:Math.max(8,d.height),fill:'rgba(0,0,0,0.001)',stroke:'rgba(0,0,0,0)',strokeWidth:0,selectable:false,evented:true,hoverCursor:'text'});
+ (region as Rect & {ocrText?:string;ocrDetection?:Detection}).ocrText=d.text;
+ (region as Rect & {ocrText?:string;ocrDetection?:Detection}).ocrDetection=d;
+ c.add(region);
  }
+
  async function detect(){
  const img=source.current,c=editor.current;
  if(!img||!c)return;
@@ -109,12 +126,14 @@ export default function App(){
    const lines=result.data.lines||[];
    const words=result.data.words||[];
    const sx=c.width/img.naturalWidth,sy=c.height/img.naturalHeight;
+   // Remove prior unedited OCR hit regions without touching original pixels.
+   c.getObjects().filter(o=>o instanceof Rect && !!(o as Rect & {ocrText?:string}).ocrText).forEach(o=>c.remove(o));
    let n=0;
    if(lines.length){
      for(const line of lines){
        if(!line.text.trim()||line.confidence<35)continue;
        const b=line.bbox;
-       addText({text:line.text.trim(),left:b.x0*sx,top:b.y0*sy,width:(b.x1-b.x0)*sx,height:(b.y1-b.y0)*sy});
+       markText({text:line.text.trim(),left:b.x0*sx,top:b.y0*sy,width:(b.x1-b.x0)*sx,height:(b.y1-b.y0)*sy});
        n++;
      }
    }else{
@@ -129,10 +148,10 @@ export default function App(){
        group.sort((a,b)=>a.bbox.x0-b.bbox.x0);
        const x0=Math.min(...group.map(w=>w.bbox.x0)),y0=Math.min(...group.map(w=>w.bbox.y0));
        const x1=Math.max(...group.map(w=>w.bbox.x1)),y1=Math.max(...group.map(w=>w.bbox.y1));
-       addText({text:group.map(w=>w.text).join(' '),left:x0*sx,top:y0*sy,width:(x1-x0)*sx,height:(y1-y0)*sy});n++;
+       markText({text:group.map(w=>w.text).join(' '),left:x0*sx,top:y0*sy,width:(x1-x0)*sx,height:(y1-y0)*sy});n++;
      }
    }
-   setMessage(n? n+' editable OCR text layers created. Original lettering is replaced using surrounding image pixels. Double-click a word or line to edit it directly with a cursor.':'OCR completed, but no sufficiently clear words were found.');
+   setMessage(n? n+' text regions detected. Click the word you want to edit; the rest of the image stays untouched.':'OCR completed, but no sufficiently clear words were found.');
  }catch(error){
    console.error('PixelType OCR failure:',error);
    setMessage('OCR failed: '+(error instanceof Error?error.message:String(error)));
@@ -147,5 +166,5 @@ export default function App(){
  return <div className="app"><header><div className="brand"><span className="logo">T<span>.</span></span><div><strong>PixelType</strong><small>IMAGE TEXT STUDIO</small></div></div><div className="header-actions"><span className="pill">● Local-first editor</span><button onClick={()=>fileInput.current?.click()}><ImagePlus size={17}/> New image</button><button className="primary" onClick={exportImage} disabled={!loaded}><Download size={17}/> Export PNG</button></div></header>
  <div className="workspace"><aside className="tools"><button title="Upload image" onClick={()=>fileInput.current?.click()}><Upload/></button><button title="Detect text (OCR)" onClick={detect} disabled={!loaded||busy}><ScanText/></button><button title="Add text" onClick={()=>addText()} disabled={!loaded}><Type/></button><button title="Undo" onClick={()=>restore(indexRef.current-1)} disabled={historyIndex<=0}><Undo2/></button><button title="Redo" onClick={()=>restore(indexRef.current+1)} disabled={historyIndex>=history.length-1}><Redo2/></button><button title="Delete selected text" onClick={remove} disabled={!selected}><Trash2/></button></aside>
  <main className="stage"><div className="stagebar"><span>CANVAS</span><span>{loaded?editor.current?.width+' × '+editor.current?.height+' px':'No image selected'}</span></div><div className="canvas-wrap">{!loaded&&<div className="empty"><div className="empty-icon"><ImagePlus size={40}/></div><h1>Edit text. Keep the look.</h1><p>Upload a photo, screenshot, poster or graphic. Detect text and add editable layers directly over your image.</p><button className="primary big" onClick={()=>fileInput.current?.click()}><Upload size={19}/> Choose an image</button><p className="hint">PNG · JPG · WebP · All processing happens in your browser</p></div>}<div className={loaded?'canvas-visible':'canvas-hidden'}><canvas ref={element}/></div></div><div className="status">{busy?'⏳ ': '✦ '}{message}</div></main>
- <aside className="inspector"><div className="panel-title">PROPERTIES</div>{selected?<div className="fields"><label>TEXT CONTENT<textarea rows={4} value={value} onChange={e=>{setValue(e.target.value);update({text:e.target.value})}}/></label><label>FONT FAMILY<select value={font} onChange={e=>{setFont(e.target.value);update({fontFamily:e.target.value})}}>{['Arial','Helvetica','Georgia','Times New Roman','Verdana','Tahoma','Trebuchet MS','Courier New','Impact','Comic Sans MS'].map(f=><option key={f}>{f}</option>)}</select></label><div className="split"><label>FONT SIZE<input type="number" min="6" max="300" value={size} onChange={e=>{const n=Number(e.target.value);setSize(n);update({fontSize:n})}}/></label><label>TEXT COLOUR<input type="color" value={color} onChange={e=>{setColor(e.target.value);update({fill:e.target.value})}}/></label></div><label>OPACITY — {opacity}%<input type="range" min="0" max="100" value={opacity} onChange={e=>{const n=Number(e.target.value);setOpacity(n);update({opacity:n/100})}}/></label><label>ROTATION — {angle}°<input type="range" min="-180" max="180" value={angle} onChange={e=>{const n=Number(e.target.value);setAngle(n);update({angle:n})}}/></label><button onClick={cover}>Add white cover behind text</button><button className="danger" onClick={remove}><Trash2 size={16}/> Delete layer</button></div>:<div className="no-selection"><Type size={28}/><h3>No text selected</h3><p>Select a text layer on the canvas to edit its appearance.</p></div>}<div className="panel-title lower">QUICK ACTIONS</div><div className="quick"><button onClick={detect} disabled={!loaded||busy}><ScanText size={17}/> Detect text with OCR</button><button onClick={()=>addText()} disabled={!loaded}><Type size={17}/> Add text layer</button><button onClick={()=>setShowOriginal(!showOriginal)} disabled={!loaded}>{showOriginal?<Eye size={17}/>:<EyeOff size={17}/>} Original image: {showOriginal?'visible':'hidden'}</button></div><p className="disclaimer">Detected words are replaced using nearby image pixels and editable text with estimated colour and width. Complex textures and exact fonts still require advanced AI restoration.</p></aside></div>
+ <aside className="inspector"><div className="panel-title">PROPERTIES</div>{selected?<div className="fields"><label>TEXT CONTENT<textarea rows={4} value={value} onChange={e=>{setValue(e.target.value);update({text:e.target.value})}}/></label><label>FONT FAMILY<select value={font} onChange={e=>{setFont(e.target.value);update({fontFamily:e.target.value})}}>{['Arial','Helvetica','Georgia','Times New Roman','Verdana','Tahoma','Trebuchet MS','Courier New','Impact','Comic Sans MS'].map(f=><option key={f}>{f}</option>)}</select></label><div className="split"><label>FONT SIZE<input type="number" min="6" max="300" value={size} onChange={e=>{const n=Number(e.target.value);setSize(n);update({fontSize:n})}}/></label><label>TEXT COLOUR<input type="color" value={color} onChange={e=>{setColor(e.target.value);update({fill:e.target.value})}}/></label></div><label>OPACITY — {opacity}%<input type="range" min="0" max="100" value={opacity} onChange={e=>{const n=Number(e.target.value);setOpacity(n);update({opacity:n/100})}}/></label><label>ROTATION — {angle}°<input type="range" min="-180" max="180" value={angle} onChange={e=>{const n=Number(e.target.value);setAngle(n);update({angle:n})}}/></label><button onClick={cover}>Add white cover behind text</button><button className="danger" onClick={remove}><Trash2 size={16}/> Delete layer</button></div>:<div className="no-selection"><Type size={28}/><h3>No text selected</h3><p>Select a text layer on the canvas to edit its appearance.</p></div>}<div className="panel-title lower">QUICK ACTIONS</div><div className="quick"><button onClick={detect} disabled={!loaded||busy}><ScanText size={17}/> Detect text with OCR</button><button onClick={()=>addText()} disabled={!loaded}><Type size={17}/> Add text layer</button><button onClick={()=>setShowOriginal(!showOriginal)} disabled={!loaded}>{showOriginal?<Eye size={17}/>:<EyeOff size={17}/>} Original image: {showOriginal?'visible':'hidden'}</button></div><p className="disclaimer">Detection leaves the original image unchanged. Click a detected text region to replace just that region. Exact fonts and complex backgrounds still require advanced restoration.</p></aside></div>
  <input ref={fileInput} hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={e=>{void upload(e.target.files?.[0]);e.target.value=''}}/></div>}
