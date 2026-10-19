@@ -18,7 +18,46 @@ export default function App(){
  function update(props:Partial<IText>){if(!selected)return;selected.set(props);selected.setCoords();editor.current?.requestRenderAll();save()}
  async function upload(file?:File){if(!file||!file.type.startsWith('image/'))return;setBusy(true);try{const url=URL.createObjectURL(file);const img=new Image();await new Promise<void>((resolve,reject)=>{img.onload=()=>resolve();img.onerror=reject;img.src=url});const c=editor.current!;const scale=Math.min(1,1400/Math.max(img.naturalWidth,img.naturalHeight));const w=Math.round(img.naturalWidth*scale),h=Math.round(img.naturalHeight*scale);c.clear();c.setDimensions({width:w,height:h});const background=await FabricImage.fromURL(url);background.set({left:0,top:0,scaleX:w/img.naturalWidth,scaleY:h/img.naturalHeight,selectable:false,evented:false});c.add(background);c.sendObjectToBack(background);c.renderAll();source.current=img;setLoaded(true);setShowOriginal(true);setMessage('Image loaded. Detect text or add a text layer.');URL.revokeObjectURL(url);historyRef.current=[];indexRef.current=-1;save()}catch(e){setMessage('Unable to open this image.')}finally{setBusy(false)}}
  function addText(d?:Detection){const c=editor.current;if(!c||!loaded)return;const t=new IText(d?.text||'Your text',{left:d?.left??c.width/4,top:d?.top??c.height/3,fontFamily:'Arial',fontSize:d?Math.max(12,Math.min(120,d.height*.85)):36,fill:'#ffffff',strokeWidth:0});c.add(t);c.setActiveObject(t);c.renderAll();setSelected(t);setValue(t.text||'');save()}
- async function detect(){const img=source.current,c=editor.current;if(!img||!c)return;setBusy(true);setMessage('Running OCR in your browser…');try{const worker=await createWorker('eng');try{const result=await worker.recognize(img);const words=result.data.words||[];const sx=c.width/img.naturalWidth,sy=c.height/img.naturalHeight;let n=0;for(const word of words){const b=word.bbox;if(!word.text.trim()||word.confidence<45)continue;addText({text:word.text,left:b.x0*sx,top:b.y0*sy,width:(b.x1-b.x0)*sx,height:(b.y1-b.y0)*sy});n++}setMessage(n+' editable OCR text layers created. Original pixels remain until you cover them.')}finally{await worker.terminate()}}catch(e){setMessage('OCR failed. Check your connection for the first language download.')}finally{setBusy(false)}}
+ async function detect(){
+ const img=source.current,c=editor.current;
+ if(!img||!c)return;
+ setBusy(true);setMessage('Preparing OCR…');
+ let worker:Awaited<ReturnType<typeof createWorker>>|undefined;
+ try{
+   // The original blob URL is revoked after upload. OCR must receive stable image pixels,
+   // not the revoked HTMLImageElement.src.
+   const pixels=document.createElement('canvas');
+   pixels.width=img.naturalWidth;pixels.height=img.naturalHeight;
+   const ctx=pixels.getContext('2d');
+   if(!ctx)throw new Error('Canvas 2D context is unavailable');
+   ctx.drawImage(img,0,0);
+   const imageData=pixels.toDataURL('image/png');
+   worker=await createWorker('eng',1,{
+     logger:progress=>{
+       if(progress.status==='recognizing text')setMessage('Recognizing text… '+Math.round(progress.progress*100)+'%');
+       else if(progress.status)setMessage('OCR: '+progress.status);
+     }
+   });
+   // Tesseract.js v5 does not include word boxes unless explicitly requested.
+   const result=await worker.recognize(imageData,{}, {text:true,words:true});
+   const words=result.data.words||[];
+   const sx=c.width/img.naturalWidth,sy=c.height/img.naturalHeight;
+   let n=0;
+   for(const word of words){
+     const b=word.bbox;
+     if(!word.text.trim()||word.confidence<45)continue;
+     addText({text:word.text,left:b.x0*sx,top:b.y0*sy,width:(b.x1-b.x0)*sx,height:(b.y1-b.y0)*sy});
+     n++;
+   }
+   setMessage(n? n+' editable OCR text layers created. Original image pixels remain underneath.':'OCR completed, but no sufficiently clear words were found.');
+ }catch(error){
+   console.error('PixelType OCR failure:',error);
+   setMessage('OCR failed: '+(error instanceof Error?error.message:String(error)));
+ }finally{
+   if(worker){try{await worker.terminate()}catch(error){console.warn('OCR cleanup:',error)}}
+   setBusy(false);
+ }
+ }
  function cover(){if(!selected||!editor.current)return;const c=editor.current;const bounds=selected.getBoundingRect();const r=new Rect({left:bounds.left,top:bounds.top,width:bounds.width,height:bounds.height,fill:'#ffffff',selectable:true});c.add(r);c.sendObjectBackwards(r);c.requestRenderAll();save();setMessage('White cover inserted. Change its fill colour using Fabric controls in a future release.')}
  function exportImage(){const c=editor.current;if(!c)return;const a=document.createElement('a');a.download='pixeltype-edited.png';a.href=c.toDataURL({format:'png',multiplier:1});a.click()}
  function remove(){if(!selected)return;editor.current?.remove(selected);editor.current?.discardActiveObject();editor.current?.requestRenderAll();setSelected(null);save()}
