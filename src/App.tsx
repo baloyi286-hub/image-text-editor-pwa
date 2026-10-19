@@ -80,7 +80,7 @@ export default function App(){
    const appearance=sampleAppearance(d);fill=appearance.foreground;
    restoreBackground(d);
  }
- const t=new IText(d?.text||'Your text',{editable:true,stroke:d?'#111111':undefined,strokeWidth:d?Math.max(0.7,d.height*.025):0,paintFirst:'stroke',left:d?.left??c.width/4,top:d?.top??c.height/3,fontFamily:'Arial',fontSize:d?Math.max(8,Math.min(120,d.height*.9)):36,fill,strokeWidth:0});
+ const t=new IText(d?.text||'Your text',{editable:true,stroke:d?'#111111':undefined,strokeWidth:d?Math.max(0.7,d.height*.025):0,paintFirst:'stroke',left:d?.left??c.width/4,top:d?.top??c.height/3,fontFamily:'Arial',fontSize:d?Math.max(8,Math.min(120,d.height*.9)):36,fill});
  if(d&&t.width&&d.width>0){t.set({scaleX:d.width/t.width});}
  c.add(t);c.setActiveObject(t);c.renderAll();setSelected(t);setValue(t.text||'');save();
  }
