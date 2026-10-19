@@ -39,7 +39,7 @@ export default function App(){
      }
    });
    // Tesseract.js v5 does not include word boxes unless explicitly requested.
-   const result=await worker.recognize(imageData,{}, {text:true,words:true});
+   const result=await worker.recognize(imageData);
    const words=result.data.words||[];
    const sx=c.width/img.naturalWidth,sy=c.height/img.naturalHeight;
    let n=0;
