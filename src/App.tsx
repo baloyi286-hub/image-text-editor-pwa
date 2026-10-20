@@ -23,19 +23,47 @@ export default function App(){
  async function upload(file?:File){if(!file||!file.type.startsWith('image/'))return;setBusy(true);try{const url=URL.createObjectURL(file);const img=new Image();await new Promise<void>((resolve,reject)=>{img.onload=()=>resolve();img.onerror=reject;img.src=url});const c=editor.current!;const scale=Math.min(1,1400/Math.max(img.naturalWidth,img.naturalHeight));const w=Math.round(img.naturalWidth*scale),h=Math.round(img.naturalHeight*scale);c.clear();c.setDimensions({width:w,height:h});const background=await FabricImage.fromURL(url);background.set({left:0,top:0,scaleX:w/img.naturalWidth,scaleY:h/img.naturalHeight,selectable:false,evented:false});c.add(background);c.sendObjectToBack(background);c.renderAll();source.current=img;setLoaded(true);setShowOriginal(true);setMessage('Image loaded. Detect text or add a text layer.');URL.revokeObjectURL(url);historyRef.current=[];indexRef.current=-1;save()}catch(e){setMessage('Unable to open this image.')}finally{setBusy(false)}}
  function sampleAppearance(d:Detection){
  const img=source.current!,c=editor.current!;
- const pixels=document.createElement('canvas');pixels.width=img.naturalWidth;pixels.height=img.naturalHeight;
- const ctx=pixels.getContext('2d')!;ctx.drawImage(img,0,0);
+ const canvas=document.createElement('canvas');canvas.width=img.naturalWidth;canvas.height=img.naturalHeight;
+ const ctx=canvas.getContext('2d')!;ctx.drawImage(img,0,0);
  const sx=img.naturalWidth/c.width,sy=img.naturalHeight/c.height;
- const x=d.left*sx,y=d.top*sy,w=d.width*sx,h=d.height*sy;
- const rgb=(px:number,py:number)=>{const data=ctx.getImageData(Math.max(0,Math.min(img.naturalWidth-1,Math.round(px))),Math.max(0,Math.min(img.naturalHeight-1,Math.round(py))),1,1).data;return [data[0],data[1],data[2]]};
- const samples=[rgb(x-3,y+h*.5),rgb(x+w+3,y+h*.5),rgb(x+w*.5,y-3),rgb(x+w*.5,y+h+3)];
- const bg=[0,1,2].map(k=>Math.round(samples.reduce((n,v)=>n+v[k],0)/samples.length));
- const textPixels=[rgb(x+w*.25,y+h*.5),rgb(x+w*.5,y+h*.5),rgb(x+w*.75,y+h*.5)];
- const distance=(p:number[])=>p.reduce((sum,v,k)=>sum+Math.abs(v-bg[k]),0);
- const fg=textPixels.sort((p,q)=>distance(q)-distance(p))[0];
- const hex=(p:number[])=>'#'+p.map(v=>Math.round(v).toString(16).padStart(2,'0')).join('');
- return {background:hex(bg),foreground:hex(distance(fg)>55?fg:bg.reduce((a,v)=>a+v,0)/3>127?[0,0,0]:[255,255,255])};
+ const x0=Math.max(0,Math.floor(d.left*sx)),y0=Math.max(0,Math.floor(d.top*sy));
+ const x1=Math.min(img.naturalWidth,Math.ceil((d.left+d.width)*sx)),y1=Math.min(img.naturalHeight,Math.ceil((d.top+d.height)*sy));
+ const data=ctx.getImageData(0,0,canvas.width,canvas.height).data;
+ const rgb=(x:number,y:number)=>{const i=(Math.max(0,Math.min(canvas.height-1,y))*canvas.width+Math.max(0,Math.min(canvas.width-1,x)))*4;return [data[i],data[i+1],data[i+2]]};
+ const samples:number[][]=[];
+ for(let i=0;i<12;i++){
+  const tx=Math.round(x0+(x1-x0)*(i+.5)/12),ty=Math.round(y0+(y1-y0)*(i+.5)/12);
+  samples.push(rgb(tx,Math.max(0,y0-3)),rgb(tx,Math.min(canvas.height-1,y1+3)),rgb(Math.max(0,x0-3),ty),rgb(Math.min(canvas.width-1,x1+3),ty));
  }
+ const median=(values:number[])=>values.sort((a,b)=>a-b)[Math.floor(values.length/2)];
+ const bg=[0,1,2].map(k=>median(samples.map(p=>p[k])));
+ const dist=(p:number[])=>Math.hypot(...p.map((v,k)=>v-bg[k]));
+ const histogram=new Map<string,{rgb:number[];count:number}>();
+ let foregroundPixels=0,occupied=0,transitions=0;
+ for(let y=y0;y<y1;y+=Math.max(1,Math.floor(sy)))for(let x=x0;x<x1;x+=Math.max(1,Math.floor(sx))){
+  const p=rgb(x,y),distance=dist(p);if(distance<45)continue;
+  foregroundPixels++;
+  const key=p.map(v=>Math.round(v/24)*24).join(',');
+  const entry=histogram.get(key)||{rgb:p,count:0};entry.count++;histogram.set(key,entry);
+ }
+ const candidates=[...histogram.values()].sort((a,b)=>b.count-a.count);
+ const fg=candidates[0]?.rgb||[0,0,0];
+ for(let y=y0;y<y1;y+=Math.max(1,Math.round(sy*2))){
+  let prev=false;
+  for(let x=x0;x<x1;x+=Math.max(1,Math.round(sx*2))){
+   const active=dist(rgb(x,y))>65;
+   if(active)occupied++;
+   if(active!==prev)transitions++;
+   prev=active;
+  }
+ }
+ const fillRatio=foregroundPixels/Math.max(1,(x1-x0)*(y1-y0)/(Math.max(1,Math.floor(sx))*Math.max(1,Math.floor(sy))));
+ const hasOutline=candidates.length>1 && candidates.slice(1,4).some(v=>v.count>foregroundPixels*.07 && Math.hypot(...v.rgb.map((n,k)=>n-fg[k]))>110);
+ const hex=(p:number[])=>'#'+p.map(v=>Math.max(0,Math.min(255,Math.round(v))).toString(16).padStart(2,'0')).join('');
+ const strokeColor=candidates.slice(1).find(v=>Math.hypot(...v.rgb.map((n,k)=>n-fg[k]))>110)?.rgb||[0,0,0];
+ return {background:hex(bg),foreground:hex(fg),outline:hasOutline?hex(strokeColor):undefined,weight:fillRatio>.30?'bold':'normal',fillRatio,transitions,occupied};
+ }
+
  function restoreBackground(d:Detection){
  const img=source.current!,c=editor.current!;
  const sx=img.naturalWidth/c.width,sy=img.naturalHeight/c.height;
@@ -110,8 +138,15 @@ export default function App(){
      setMessage('Image service unavailable; using local background fill.');
    }
  }else c.add(cover);
- const white=appearance.foreground.toLowerCase()==='#ffffff';
- const t=new IText(d.text,{left:d.left,top:d.top- Math.max(0,d.height*.06),fontFamily:'Arial',fontWeight:'bold',fontSize:Math.max(10,d.height*.99),fill:white?'#ffffff':appearance.foreground,stroke:'#111111',strokeWidth:Math.max(1,d.height*.035),paintFirst:'stroke',strokeUniform:true,editable:true});
+ const candidateFonts=['Arial','Helvetica','Verdana','Tahoma','Georgia','Times New Roman','Impact'];
+ const measure=document.createElement('canvas').getContext('2d')!;
+ const fontSize=Math.max(9,d.height*1.04);
+ const best=candidateFonts.map(family=>{
+  measure.font=`${appearance.weight} ${fontSize}px "${family}"`;
+  const width=measure.measureText(d.text).width;
+  return {family,width,score:Math.abs(Math.log(Math.max(1,width)/Math.max(1,d.width)))};
+ }).sort((a,b)=>a.score-b.score)[0];
+ const t=new IText(d.text,{left:d.left,top:d.top-Math.max(0,d.height*.08),fontFamily:best.family,fontWeight:appearance.weight,fontSize,fill:appearance.foreground,stroke:appearance.outline,strokeWidth:appearance.outline?Math.max(.8,d.height*.035):0,paintFirst:'stroke',strokeUniform:true,editable:true});
  if(t.width&&d.width>0)t.set({scaleX:d.width/t.width});
  c.add(t);c.setActiveObject(t);c.requestRenderAll();setSelected(t);setValue(t.text||'');save();return t;
  }
