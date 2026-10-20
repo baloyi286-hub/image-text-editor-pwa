@@ -1,4 +1,5 @@
 import {useEffect,useRef,useState} from 'react';
+import 'vite/client';
 import {Canvas,FabricImage,IText,Rect,FabricObject} from 'fabric';
 import {createWorker} from 'tesseract.js';
 import {Upload,ScanText,Type,Download,Undo2,Redo2,Trash2,ImagePlus,Eye,EyeOff} from 'lucide-react';
@@ -6,6 +7,7 @@ type Detection={text:string;left:number;top:number;width:number;height:number};
 export default function App(){
  const element=useRef<HTMLCanvasElement>(null),editor=useRef<Canvas|null>(null),source=useRef<HTMLImageElement|null>(null),fileInput=useRef<HTMLInputElement>(null);
  const [aiEnabled,setAiEnabled]=useState(Boolean(import.meta.env.VITE_AI_API_URL));
+ const aiEnabledRef=useRef(aiEnabled);aiEnabledRef.current=aiEnabled;
  const [loaded,setLoaded]=useState(false),[busy,setBusy]=useState(false),[message,setMessage]=useState('Upload an image to begin'),[selected,setSelected]=useState<IText|null>(null);
  const [value,setValue]=useState(''),[color,setColor]=useState('#ffffff'),[font,setFont]=useState('Arial'),[size,setSize]=useState(36),[opacity,setOpacity]=useState(100),[angle,setAngle]=useState(0),[showOriginal,setShowOriginal]=useState(true);
  const [history,setHistory]=useState<string[]>([]),[historyIndex,setHistoryIndex]=useState(-1),historyRef=useRef<string[]>([]),indexRef=useRef(-1),restoring=useRef(false);
@@ -82,7 +84,7 @@ export default function App(){
  // uniform cover avoids sampling characters from unrelated nearby artwork.
  const pad=Math.max(1,Math.min(3,d.height*.035));
  const cover=new Rect({left:Math.max(0,d.left-pad),top:Math.max(0,d.top-pad),width:d.width+pad*2,height:d.height+pad*2,fill:appearance.background,selectable:false,evented:false});
- if(aiEnabled && import.meta.env.VITE_AI_API_URL){
+ if(aiEnabledRef.current && import.meta.env.VITE_AI_API_URL){
    try{
      setMessage('Restoring selected text background using the image service…');
      const img=source.current!;
@@ -93,7 +95,7 @@ export default function App(){
      const form=new FormData();form.append('image',blob,'source.png');
      form.append('x',String(d.left*sx));form.append('y',String(d.top*sy));
      form.append('width',String(d.width*sx));form.append('height',String(d.height*sy));
-     const endpoint=String(import.meta.env.VITE_AI_API_URL).replace(/\\/$/,'')+'/v1/inpaint';
+     const endpoint=String(import.meta.env.VITE_AI_API_URL).replace(/\/$/,'')+'/v1/inpaint';
      const response=await fetch(endpoint,{method:'POST',body:form});
      if(!response.ok)throw new Error('HTTP '+response.status);
      const result=await response.blob();
