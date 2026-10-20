@@ -1,5 +1,4 @@
 import {useEffect,useRef,useState} from 'react';
-import 'vite/client';
 import {Canvas,FabricImage,IText,Rect,FabricObject} from 'fabric';
 import {createWorker} from 'tesseract.js';
 import {Upload,ScanText,Type,Download,Undo2,Redo2,Trash2,ImagePlus,Eye,EyeOff} from 'lucide-react';
