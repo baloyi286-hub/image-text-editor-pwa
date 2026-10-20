@@ -1,30 +1,40 @@
-# PixelType — Image Text Editor PWA
+# PixelType — Hybrid Image Text Editor PWA
 
-A browser-based, installable image text editor built with React, TypeScript, Fabric.js and Tesseract.js.
+PixelType combines **browser-based OCR and editable text layers** (React, TypeScript, Fabric.js, Tesseract.js) with an **optional Python image-restoration API** (FastAPI and OpenCV).
 
-## Features
-- Upload PNG, JPG or WebP images
-- Detect words with browser-based OCR and create editable text overlays
-- Add, move, rotate and resize text
-- Change font, colour, size, opacity and text content
-- Undo/redo edits and export a PNG
-- Offline-capable PWA after first load (OCR language files may require network)
+## Current capabilities
 
-## Run
+- Upload PNG, JPEG, WebP images; OCR detection runs locally in the browser.
+- Click a detected text region to replace that region with an editable Fabric.js text object.
+- Adjust text, colour, size, font, opacity and rotation; export PNG.
+- With the optional backend configured, restore the clicked region through the remote inpainting endpoint; otherwise use a basic local flat-colour cover.
+- Undo and redo text edits. PWA can be installed after loading.
+
+**Current limitations:** OCR and font style matching are heuristic. The Python service uses OpenCV Telea inpainting, **not** a trained AI inpainting model. Complex graphics, outlined text, and imperfect OCR masks can still produce visible artifacts. A future model adapter, glyph-level masks, better font classification, and authenticated rate-limited hosting are needed for PhoText-quality editing.
+
+## Local development
+
 ```bash
 npm install
 npm run dev
 ```
-Open the local URL shown by Vite.
 
-## Build
-```bash
-npm run build
-npm run preview
+For the optional restoration service, follow [backend/README.md](backend/README.md) and run the API on port 8080. Copy `.env.example` to `.env.local` and set:
+
+```dotenv
+VITE_AI_API_URL=http://localhost:8080
 ```
 
-## Deploy
-Import this repository into Vercel, choose Vite and use the default build command `npm run build` and output directory `dist`.
+Restart the Vite dev server after changing environment variables.
 
-## Limitations
-OCR creates editable text overlays and does not remove the source pixels. The white cover action is a basic rectangle, not intelligent inpainting. Exact original font identification, background reconstruction and colour sampling are planned, not implemented. Image editing runs locally; no user images are uploaded to a server.
+## Deployment
+
+**Frontend:** Import the GitHub repository into Vercel. Build command: `npm run build`; output: `dist`.
+
+**Backend:** Build and deploy `backend/Dockerfile` on a separate container host. Set `CORS_ORIGINS=https://your-frontend-domain` on the backend. Set `VITE_AI_API_URL=https://your-backend-domain` on Vercel, then redeploy the frontend. HTTPS is required for a public HTTPS frontend.
+
+**Privacy:** OCR stays local, but enabling the remote restoration service **uploads the original image to that service** when you click a detected region. Leave the backend URL unset to avoid this transfer.
+
+## Verification
+
+Run `npm run build` and test browser editing. Check the backend with `GET /health` and its `POST /v1/inpaint` endpoint. Do not assume the cloud backend is running until it has been deployed and health-checked.
