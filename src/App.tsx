@@ -113,10 +113,12 @@ export default function App(){
   }
  }
  const fillRatio=foregroundPixels/Math.max(1,(x1-x0)*(y1-y0)/(Math.max(1,Math.floor(sx))*Math.max(1,Math.floor(sy))));
- const hasOutline=candidates.length>1 && candidates.slice(1,4).some(v=>v.count>foregroundPixels*.07 && Math.hypot(...v.rgb.map((n,k)=>n-fg[k]))>110);
+ // Antialiased text contains multiple shades; this is not evidence of an outline.
+ // Only enable outlines when a dedicated outline detector can establish one.
+ const hasOutline=false;
  const hex=(p:number[])=>'#'+p.map(v=>Math.max(0,Math.min(255,Math.round(v))).toString(16).padStart(2,'0')).join('');
  const strokeColor=candidates.slice(1).find(v=>Math.hypot(...v.rgb.map((n,k)=>n-fg[k]))>110)?.rgb||[0,0,0];
- return {background:hex(bg),foreground:hex(fg),outline:hasOutline?hex(strokeColor):undefined,weight:fillRatio>.30?'bold':'normal',fillRatio,transitions,occupied};
+ return {background:hex(bg),foreground:hex(fg),outline:hasOutline?hex(strokeColor):undefined,weight:'normal' as const,fillRatio,transitions,occupied};
  }
 
  function restoreBackground(d:Detection){
@@ -193,16 +195,27 @@ export default function App(){
      setMessage('Image service unavailable; using local background fill.');
    }
  }else c.add(cover);
- const candidateFonts=['Arial','Helvetica','Verdana','Tahoma','Georgia','Times New Roman','Impact'];
+ // Match the existing regular-weight text without inferring bold from OCR pixel density.
+ // Use both horizontal width and bounding-box height rather than width alone.
+ const candidateFonts=['Arial','Helvetica','Verdana','Tahoma','Segoe UI','Roboto','Georgia','Times New Roman'];
  const measure=document.createElement('canvas').getContext('2d')!;
- const fontSize=Math.max(9,d.height*1.04);
+ const fontSize=Math.max(8,d.height*.92);
+ const originalText=d.text.trim()||replacementText||'';
  const best=candidateFonts.map(family=>{
-  measure.font=`${appearance.weight} ${fontSize}px "${family}"`;
-  const width=measure.measureText(replacementText??d.text).width;
-  return {family,width,score:Math.abs(Math.log(Math.max(1,width)/Math.max(1,d.width)))};
+  measure.font=`400 ${fontSize}px "${family}"`;
+  const metrics=measure.measureText(originalText);
+  const width=metrics.width;
+  const inkHeight=(metrics.actualBoundingBoxAscent||fontSize*.75)+(metrics.actualBoundingBoxDescent||fontSize*.2);
+  const widthError=Math.abs(Math.log(Math.max(1,width)/Math.max(1,d.width)));
+  const heightError=Math.abs(Math.log(Math.max(1,inkHeight)/Math.max(1,d.height)));
+  return {family,score:widthError+heightError*.75};
  }).sort((a,b)=>a.score-b.score)[0];
- const t=new IText(replacementText??d.text,{left:d.left,top:d.top-Math.max(0,d.height*.08),fontFamily:best.family,fontWeight:appearance.weight,fontSize,fill:appearance.foreground,stroke:appearance.outline,strokeWidth:appearance.outline?Math.max(.8,d.height*.035):0,paintFirst:'stroke',strokeUniform:true,editable:true});
- if(t.width&&d.width>0)t.set({scaleX:d.width/t.width});
+ const t=new IText(replacementText??d.text,{left:d.left,top:d.top-Math.max(0,d.height*.04),fontFamily:best.family,fontWeight:'normal',fontSize,fill:appearance.foreground,stroke:undefined,strokeWidth:0,paintFirst:'fill',editable:true});
+ // Width calibration uses the ORIGINAL text, not the replacement length.
+ // New letters should extend naturally instead of being compressed into the old box.
+ measure.font=`400 ${fontSize}px "${best.family}"`;
+ const referenceWidth=measure.measureText(originalText).width;
+ if(referenceWidth>0&&d.width>0)t.set({scaleX:Math.max(.75,Math.min(1.25,d.width/referenceWidth))});
  c.add(t);c.setActiveObject(t);c.requestRenderAll();setSelected(t);setValue(t.text||'');save();return t;
  }
  function addText(d?:Detection){
