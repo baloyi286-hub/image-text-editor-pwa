@@ -5,6 +5,7 @@ import {Upload,ScanText,Type,Download,Undo2,Redo2,Trash2,ImagePlus,Eye,EyeOff} f
 type Detection={text:string;left:number;top:number;width:number;height:number};
 export default function App(){
  const element=useRef<HTMLCanvasElement>(null),editor=useRef<Canvas|null>(null),source=useRef<HTMLImageElement|null>(null),fileInput=useRef<HTMLInputElement>(null);
+ const [pendingRegion,setPendingRegion]=useState<Detection|null>(null);
  const [panel,setPanel]=useState<'font'|'style'|'position'|'tools'>('font');
  const [fontCategory,setFontCategory]=useState('All');
  const [strokeColor,setStrokeColor]=useState('#000000'),[strokeSize,setStrokeSize]=useState(0),[spacing,setSpacing]=useState(0);
@@ -18,7 +19,7 @@ export default function App(){
  useEffect(()=>{if(!element.current)return;const c=new Canvas(element.current,{width:960,height:540,backgroundColor:'#202c28',preserveObjectStacking:true});editor.current=c;
  const sync=()=>{const o=c.getActiveObject();if(o instanceof IText){setSelected(o);setValue(o.text||'');setColor(typeof o.fill==='string'?o.fill:'#ffffff');setFont(o.fontFamily||'Arial');setSize(o.fontSize||36);setOpacity(Math.round((o.opacity||1)*100));setAngle(o.angle||0);setStrokeColor(typeof o.stroke==='string'?o.stroke:'#000000');setStrokeSize(o.strokeWidth||0);setSpacing(o.charSpacing||0);setPanel('font')}else setSelected(null)};
  c.on('selection:created',sync);c.on('selection:updated',sync);c.on('selection:cleared',sync);
- c.on('mouse:down',event=>{const target=event.target;if(target instanceof Rect && (target as Rect & {ocrText?:string}).ocrText){const region=target as Rect & {ocrText?:string;ocrDetection?:Detection};if(!region.ocrDetection)return;const detection=region.ocrDetection;c.remove(region);void createReplacement(detection).then(t=>{t.enterEditing();t.selectAll();t.hiddenTextarea?.focus();c.requestRenderAll()}).catch(error=>setMessage('Unable to prepare selected text: '+String(error)));}});
+ c.on('mouse:down',event=>{const target=event.target;if(target instanceof Rect && (target as Rect & {ocrText?:string}).ocrText){const region=target as Rect & {ocrText?:string;ocrDetection?:Detection};if(!region.ocrDetection)return;const detection=region.ocrDetection;setPendingRegion(detection);setValue(detection.text);setSelected(null);setMessage('Original text preserved. Edit below, then apply the replacement only when ready.');}});
  c.on('mouse:dblclick',event=>{const target=event.target;if(target instanceof IText){c.setActiveObject(target);target.enterEditing();target.selectAll();target.hiddenTextarea?.focus();c.requestRenderAll()}});
  const changed=()=>save();c.on('object:modified',changed);c.on('text:changed',changed);c.on('object:added',changed);c.on('object:removed',changed);
  return()=>{editor.current=null;void c.dispose()}},[]);
@@ -109,7 +110,7 @@ export default function App(){
  const layer=new FabricImage(patch,{left,top,selectable:false,evented:false});
  c.add(layer);
  }
- async function createReplacement(d:Detection){
+ async function createReplacement(d:Detection,replacementText?:string){
  const c=editor.current!;
  const appearance=sampleAppearance(d);
  // Only the clicked OCR region is changed. For flat-colour graphics, a
@@ -148,10 +149,10 @@ export default function App(){
  const fontSize=Math.max(9,d.height*1.04);
  const best=candidateFonts.map(family=>{
   measure.font=`${appearance.weight} ${fontSize}px "${family}"`;
-  const width=measure.measureText(d.text).width;
+  const width=measure.measureText(replacementText??d.text).width;
   return {family,width,score:Math.abs(Math.log(Math.max(1,width)/Math.max(1,d.width)))};
  }).sort((a,b)=>a.score-b.score)[0];
- const t=new IText(d.text,{left:d.left,top:d.top-Math.max(0,d.height*.08),fontFamily:best.family,fontWeight:appearance.weight,fontSize,fill:appearance.foreground,stroke:appearance.outline,strokeWidth:appearance.outline?Math.max(.8,d.height*.035):0,paintFirst:'stroke',strokeUniform:true,editable:true});
+ const t=new IText(replacementText??d.text,{left:d.left,top:d.top-Math.max(0,d.height*.08),fontFamily:best.family,fontWeight:appearance.weight,fontSize,fill:appearance.foreground,stroke:appearance.outline,strokeWidth:appearance.outline?Math.max(.8,d.height*.035):0,paintFirst:'stroke',strokeUniform:true,editable:true});
  if(t.width&&d.width>0)t.set({scaleX:d.width/t.width});
  c.add(t);c.setActiveObject(t);c.requestRenderAll();setSelected(t);setValue(t.text||'');save();return t;
  }
@@ -240,6 +241,7 @@ export default function App(){
  <section className="bottom-editor">
  <nav className="toolstrip"><button onClick={()=>fileInput.current?.click()}><Upload size={19}/>Image</button><button onClick={detect} disabled={!loaded||busy}><ScanText size={19}/>Detect</button><button onClick={()=>addText()} disabled={!loaded}><Type size={19}/>Add text</button><button onClick={()=>restore(indexRef.current-1)} disabled={historyIndex<=0}><Undo2 size={19}/>Undo</button><button onClick={()=>restore(indexRef.current+1)} disabled={historyIndex>=history.length-1}><Redo2 size={19}/>Redo</button><button onClick={remove} disabled={!selected}><Trash2 size={19}/>Delete</button></nav>
  <nav className="panel-tabs">{(['font','style','position','tools'] as const).map(p=><button key={p} className={panel===p?'active':''} onClick={()=>setPanel(p)}>{p==='font'?'Font':p==='style'?'Style':p==='position'?'Position':'More tools'}</button>)}</nav>
+ {pendingRegion&&!selected&&<div className="editing-panel"><div className="text-editor"><textarea rows={2} aria-label="Replacement text" value={value} onChange={e=>setValue(e.target.value)}/><button className="primary" onClick={()=>{const d=pendingRegion;if(!d)return;if(value===d.text){setPendingRegion(null);setMessage('No changes made. Original image preserved.');return}setBusy(true);void createReplacement(d,value).then(()=>{editor.current?.getObjects().filter(o=>o instanceof Rect&&(o as Rect & {ocrDetection?:Detection}).ocrDetection===d).forEach(o=>editor.current?.remove(o));setPendingRegion(null);setMessage('Replacement applied. Adjust font styling below if necessary.')}).catch(e=>setMessage('Replacement failed: '+String(e))).finally(()=>setBusy(false))}}>Apply</button><button onClick={()=>{setPendingRegion(null);setMessage('Selection cancelled. Original image preserved.')}}>Cancel</button></div><p className="editor-hint">The original pixels stay unchanged until Apply. Exact styling of new letters is not guaranteed.</p></div>}
  {selected?<div className="editing-panel">
  <div className="text-editor"><textarea rows={2} aria-label="Edit selected text" value={value} onChange={e=>{setValue(e.target.value);update({text:e.target.value})}}/><button className="primary" onClick={()=>{editor.current?.discardActiveObject();editor.current?.requestRenderAll()}}>Done ✓</button></div>
  {panel==='font'&&<><div className="category-tabs">{['All','Sans','Serif','Display','Mono'].map(cat=><button key={cat} className={fontCategory===cat?'active':''} onClick={()=>setFontCategory(cat)}>{cat}</button>)}</div><div className="font-grid">{fontChoices.map(f=><button key={f} className={font===f?'chosen':''} onClick={()=>{setFont(f);update({fontFamily:f})}}><span style={{fontFamily:f}}>{f}</span><small style={{fontFamily:f}}>Aa Bb 0123456789</small></button>)}</div></>}
