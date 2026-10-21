@@ -1,6 +1,7 @@
 import {useEffect,useRef,useState} from 'react';
 import {Canvas,FabricImage,IText,Rect,FabricObject} from 'fabric';
 import {createWorker} from 'tesseract.js';
+import {reconstructGlyphs} from './glyphReconstruction';
 import {Upload,ScanText,Type,Download,Undo2,Redo2,Trash2,ImagePlus,Eye,EyeOff} from 'lucide-react';
 type Detection={text:string;left:number;top:number;width:number;height:number};
 export default function App(){
@@ -161,7 +162,7 @@ export default function App(){
  const layer=new FabricImage(patch,{left,top,selectable:false,evented:false});
  c.add(layer);
  }
- async function createReplacement(d:Detection,replacementText?:string){
+ async function createReplacement(d:Detection,replacementText?:string):Promise<FabricImage|IText>{
  const c=editor.current!;
  const appearance=sampleAppearance(d);
  // Only the clicked OCR region is changed. For flat-colour graphics, a
@@ -195,6 +196,18 @@ export default function App(){
      setMessage('Image service unavailable; using local background fill.');
    }
  }else c.add(cover);
+ // Reuse real source glyph pixels when segmentation is unambiguous and every
+ // requested character exists in the selected original text.
+ const img=source.current;
+ if(img && replacementText && replacementText!==d.text){
+  const glyphs=reconstructGlyphs(img,d,replacementText,img.naturalWidth/c.width,img.naturalHeight/c.height);
+  if(glyphs){
+   const layer=new FabricImage(glyphs,{left:d.left,top:d.top,scaleX:c.width/img.naturalWidth,scaleY:c.height/img.naturalHeight,selectable:true,evented:true});
+   c.add(layer);c.setActiveObject(layer);c.requestRenderAll();save();
+   setMessage('Original letter shapes reused. Some typography adjustments require font fallback.');
+   return layer;
+  }
+ }
  // Match the existing regular-weight text without inferring bold from OCR pixel density.
  // Use both horizontal width and bounding-box height rather than width alone.
  const candidateFonts=['Arial','Helvetica','Verdana','Tahoma','Segoe UI','Roboto','Georgia','Times New Roman'];
