@@ -103,7 +103,7 @@ export default function App(){
   const entry=histogram.get(key)||{rgb:p,count:0};entry.count++;histogram.set(key,entry);
  }
  const candidates=[...histogram.values()].sort((a,b)=>b.count-a.count);
- const fg=candidates[0]?.rgb||[0,0,0];
+ const fg=bg.every(channel=>channel>200)?[0,0,0]:(candidates[0]?.rgb||[0,0,0]);
  for(let y=y0;y<y1;y+=Math.max(1,Math.round(sy*2))){
   let prev=false;
   for(let x=x0;x<x1;x+=Math.max(1,Math.round(sx*2))){
