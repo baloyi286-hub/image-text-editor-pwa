@@ -26,6 +26,9 @@ export function reconstructGlyphs(image:HTMLImageElement, region:{text:string;le
  const chars=[...original].filter(c=>!(/\s/.test(c)));
  // Segmentation cannot safely distinguish touching glyphs or broken strokes.
  if(runs.length!==chars.length||chars.length<2)return null;
+ // Very narrow/fragmented runs are usually punctuation, disconnected strokes
+ // or antialiasing noise, not independently reusable complete glyphs.
+ if(runs.some(r=>r.w<2))return null;
  const dictionary=new Map<string,{x:number;w:number}[]>();
  chars.forEach((letter,i)=>{const list=dictionary.get(letter)||[];list.push(runs[i]);dictionary.set(letter,list)});
  const requested=[...replacement];
@@ -51,6 +54,10 @@ export function reconstructGlyphs(image:HTMLImageElement, region:{text:string;le
   if(data.data[i+3]===0)continue;
   const l=.2126*data.data[i]+.7152*data.data[i+1]+.0722*data.data[i+2];
   const alpha=Math.max(0,Math.min(255,Math.round((bg-l)/(bg-threshold)*255)));
+  // Pixels from the white background must not retain white RGB: that
+  // produces the pale embossed/outlined effect when composited on white.
+  // Convert source darkness into opacity of solid black ink.
+  data.data[i]=0;data.data[i+1]=0;data.data[i+2]=0;
   data.data[i+3]=alpha;
  }
  out.putImageData(data,0,0);
