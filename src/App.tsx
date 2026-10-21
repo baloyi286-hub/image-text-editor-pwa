@@ -5,7 +5,7 @@ import {Upload,ScanText,Type,Download,Undo2,Redo2,Trash2,ImagePlus,Eye,EyeOff} f
 type Detection={text:string;left:number;top:number;width:number;height:number};
 export default function App(){
  const element=useRef<HTMLCanvasElement>(null),editor=useRef<Canvas|null>(null),source=useRef<HTMLImageElement|null>(null),fileInput=useRef<HTMLInputElement>(null),canvasWrap=useRef<HTMLDivElement>(null);
- const fitCanvas=()=>{const c=editor.current,wrap=canvasWrap.current;if(!c||!wrap)return;const availableWidth=Math.max(100,wrap.clientWidth-20),availableHeight=Math.max(180,wrap.clientHeight-20);const scale=Math.min(1,availableWidth/c.width,availableHeight/c.height);c.setDimensions({width:Math.max(1,Math.round(c.width*scale)),height:Math.max(1,Math.round(c.height*scale))},{cssOnly:true});c.calcOffset();};
+ const fitCanvas=()=>{const c=editor.current,wrap=canvasWrap.current;if(!c||!wrap||!source.current)return;const availableWidth=Math.max(100,wrap.clientWidth-20),availableHeight=Math.max(180,wrap.clientHeight-20);const scale=Math.min(1,availableWidth/c.width,availableHeight/c.height);c.setDimensions({width:Math.max(1,Math.round(c.width*scale)),height:Math.max(1,Math.round(c.height*scale))},{cssOnly:true});c.calcOffset();};
  const [pendingRegion,setPendingRegion]=useState<Detection|null>(null);
  const [panel,setPanel]=useState<'font'|'style'|'position'|'tools'>('font');
  const [fontCategory,setFontCategory]=useState('All');
@@ -29,7 +29,7 @@ export default function App(){
  async function restore(i:number){const c=editor.current;if(!c||i<0||i>=historyRef.current.length)return;restoring.current=true;await c.loadFromJSON(historyRef.current[i]);c.renderAll();indexRef.current=i;setHistoryIndex(i);setSelected(null);restoring.current=false}
  function update(props:Partial<IText>){if(!selected)return;selected.set(props);selected.setCoords();editor.current?.requestRenderAll();save()}
  async function upload(file?:File){
- if(!file)return;
+ if(!file){setMessage('No photo was selected.');return;}
  setBusy(true);setMessage('Reading selected photo…');
  try{
   // iOS Photos can supply image formats whose MIME type is blank or generic.
@@ -284,7 +284,7 @@ export default function App(){
  return <div className="app">
  <header><div className="brand"><span className="logo">T<span>.</span></span><div><strong>PixelType</strong><small>IMAGE TEXT STUDIO</small></div></div><div className="header-actions"><button onClick={()=>fileInput.current?.click()}><ImagePlus size={17}/> <span className="desktop-label">New image</span></button><button className="primary" onClick={exportImage} disabled={!loaded}><Download size={17}/> Export</button></div></header>
  <div className="workspace">
- <main className="stage"><div className="stagebar"><span>{loaded?'EDIT IMAGE':'CANVAS'}</span><span>{loaded?editor.current?.width+' × '+editor.current?.height+' px':'Original quality preserved'}</span></div>
+ <main className="stage"><div className="stagebar"><span>{loaded?'EDIT IMAGE':'CANVAS'}</span><span>{loaded?editor.current?.width+' × '+editor.current?.height+' px':'Original quality preserved'}</span></div><div className="upload-feedback" role="status" aria-live="polite">{busy?'⏳ ':loaded?'✓ ':'ⓘ '}{message}</div>
  <div className="canvas-wrap" ref={canvasWrap}>{!loaded&&<div className="empty"><div className="empty-icon"><ImagePlus size={40}/></div><h1>Edit text. Keep the look.</h1><p>Upload an image, tap detected text, then adjust the font and style using the tools below.</p><button className="primary big" onClick={()=>fileInput.current?.click()}><Upload size={19}/> Choose an image</button><p className="hint">PNG · JPG · WebP</p></div>}<div className={loaded?'canvas-visible':'canvas-hidden'}><canvas ref={element}/></div>{busy&&<div className="processing"><span className="spinner"/> {message}</div>}</div>
  <div className="status">{busy?'⏳ ':'✦ '}{message}</div></main>
  <section className="bottom-editor">
