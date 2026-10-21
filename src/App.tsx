@@ -28,8 +28,54 @@ export default function App(){
  function save(){const c=editor.current;if(!c||restoring.current)return;const snapshot=JSON.stringify(c.toJSON());if(historyRef.current[indexRef.current]===snapshot)return;const next=[...historyRef.current.slice(0,indexRef.current+1),snapshot].slice(-35);historyRef.current=next;indexRef.current=next.length-1;setHistory(next);setHistoryIndex(indexRef.current)}
  async function restore(i:number){const c=editor.current;if(!c||i<0||i>=historyRef.current.length)return;restoring.current=true;await c.loadFromJSON(historyRef.current[i]);c.renderAll();indexRef.current=i;setHistoryIndex(i);setSelected(null);restoring.current=false}
  function update(props:Partial<IText>){if(!selected)return;selected.set(props);selected.setCoords();editor.current?.requestRenderAll();save()}
- async function upload(file?:File){if(!file||!file.type.startsWith('image/'))return;setBusy(true);setMessage('Loading original image…');try{const url=URL.createObjectURL(file);const img=new Image();await new Promise<void>((resolve,reject)=>{img.onload=()=>resolve();img.onerror=reject;img.src=url});const c=editor.current!;// Keep the original image for OCR and restoration; cap only the interactive canvas backing store to avoid iOS Safari GPU limits.
- const scale=Math.min(1,1600/Math.max(img.naturalWidth,img.naturalHeight));const w=Math.max(1,Math.round(img.naturalWidth*scale)),h=Math.max(1,Math.round(img.naturalHeight*scale));c.clear();c.setDimensions({width:w,height:h});setMessage('Preparing full-resolution canvas…');const background=new FabricImage(img);background.set({left:0,top:0,scaleX:w/img.naturalWidth,scaleY:h/img.naturalHeight,selectable:false,evented:false});c.add(background);c.sendObjectToBack(background);c.renderAll();source.current=img;setLoaded(true);requestAnimationFrame(()=>fitCanvas());setShowOriginal(true);setMessage('Image loaded. Detect text or add a text layer.');URL.revokeObjectURL(url);historyRef.current=[];indexRef.current=-1;save()}catch(e){console.error('PixelType upload failed:',e);setMessage('Unable to open this image: '+(e instanceof Error?e.message:String(e)))}finally{setBusy(false)}}
+ async function upload(file?:File){
+ if(!file)return;
+ setBusy(true);setMessage('Reading selected photo…');
+ try{
+  // iOS Photos can supply image formats whose MIME type is blank or generic.
+  // Read the actual selected file once and retain its decoded pixels for OCR.
+  const bytes=await file.arrayBuffer();
+  if(!bytes.byteLength)throw new Error('The selected photo is empty');
+  const blob=new Blob([bytes],{type:file.type||'application/octet-stream'});
+  const url=URL.createObjectURL(blob);
+  const img=new Image();
+  try{
+   await new Promise<void>((resolve,reject)=>{
+    img.onload=()=>resolve();
+    img.onerror=()=>reject(new Error('Browser could not decode this image. Try exporting it as JPEG or PNG.'));
+    img.src=url;
+   });
+   if(!img.naturalWidth||!img.naturalHeight)throw new Error('Image dimensions unavailable');
+   const c=editor.current;
+   if(!c)throw new Error('Editor is not ready');
+   setMessage('Displaying selected photo…');
+   const scale=Math.min(1,1600/Math.max(img.naturalWidth,img.naturalHeight));
+   const w=Math.max(1,Math.round(img.naturalWidth*scale));
+   const h=Math.max(1,Math.round(img.naturalHeight*scale));
+   // Set the Fabric backing store before adding the image. Do not revoke the
+   // URL while the original HTMLImageElement is used by the editor.
+   const background=new FabricImage(img,{left:0,top:0,scaleX:w/img.naturalWidth,scaleY:h/img.naturalHeight,selectable:false,evented:false});
+   c.clear();
+   c.setDimensions({width:w,height:h});
+   c.add(background);
+   c.sendObjectToBack(background);
+   source.current=img;
+   c.requestRenderAll();
+   setLoaded(true);setPendingRegion(null);setSelected(null);
+   setShowOriginal(true);
+   historyRef.current=[];indexRef.current=-1;save();
+   requestAnimationFrame(()=>{fitCanvas();c.requestRenderAll()});
+   setMessage('Image loaded ('+img.naturalWidth+' × '+img.naturalHeight+'). Tap Detect to select text.');
+  }finally{
+   // Keep image pixels alive; the decoded element remains available after URL revocation.
+   URL.revokeObjectURL(url);
+  }
+ }catch(e){
+  console.error('PixelType photo upload:',e);
+  setMessage('Upload failed: '+(e instanceof Error?e.message:String(e)));
+ }finally{setBusy(false)}
+}
+
  function sampleAppearance(d:Detection){
  const img=source.current!,c=editor.current!;
  const canvas=document.createElement('canvas');canvas.width=img.naturalWidth;canvas.height=img.naturalHeight;
@@ -254,4 +300,4 @@ export default function App(){
  </div>:<div className="editor-hint">Tap Detect, then select text in your image to edit it. Font and styling options will appear here.</div>}
  <div className="extra-tools"><label><input type="checkbox" checked={aiEnabled} onChange={e=>setAiEnabled(e.target.checked)} disabled={!import.meta.env.VITE_AI_API_URL}/> AI background restoration {import.meta.env.VITE_AI_API_URL?'':'(not connected)'}</label><button onClick={()=>setShowOriginal(!showOriginal)} disabled={!loaded}>{showOriginal?<Eye size={15}/>:<EyeOff size={15}/>} Original visible</button></div>
  </section></div>
- <input ref={fileInput} hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={e=>{void upload(e.target.files?.[0]);e.target.value=''}}/></div>}
+ <input ref={fileInput} hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={e=>{const chosen=e.currentTarget.files?.[0];e.currentTarget.value='';void upload(chosen)}}/></div>}
