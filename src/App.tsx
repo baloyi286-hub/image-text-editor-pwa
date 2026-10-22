@@ -210,25 +210,61 @@ export default function App(){
  }
  // Match the existing regular-weight text without inferring bold from OCR pixel density.
  // Use both horizontal width and bounding-box height rather than width alone.
- const candidateFonts=['Arial','Helvetica','Verdana','Tahoma','Segoe UI','Roboto','Georgia','Times New Roman'];
- const measure=document.createElement('canvas').getContext('2d')!;
- const fontSize=Math.max(8,d.height*.92);
+ // Compare actual source letter silhouettes against browser-rendered font candidates.
+ // OCR boxes contain ink rather than CSS line boxes; fit glyph ink bounds, not line height.
+ const candidateFonts=['Arial','Helvetica','Verdana','Tahoma','Segoe UI','Roboto','Georgia','Times New Roman','Trebuchet MS'];
+ const imgCanvas=document.createElement('canvas'),img=source.current!;
+ const sx=img.naturalWidth/c.width,sy=img.naturalHeight/c.height;
+ const iw=Math.max(1,Math.round(d.width*sx)),ih=Math.max(1,Math.round(d.height*sy));
+ imgCanvas.width=iw;imgCanvas.height=ih;
+ const imageCtx=imgCanvas.getContext('2d',{willReadFrequently:true})!;
+ imageCtx.drawImage(img,d.left*sx,d.top*sy,d.width*sx,d.height*sy,0,0,iw,ih);
+ const original=imageCtx.getImageData(0,0,iw,ih).data;
+ const bg=appearance.background.match(/[a-f0-9]{2}/gi)!.map(v=>parseInt(v,16));
+ const fg=appearance.foreground.match(/[a-f0-9]{2}/gi)!.map(v=>parseInt(v,16));
+ const direction=fg.reduce((sum,v,k)=>sum+(v-bg[k])**2,0)||1;
+ const mask=new Float32Array(iw*ih);
+ for(let i=0;i<mask.length;i++){
+  let projection=0;
+  for(let k=0;k<3;k++)projection+=(original[i*4+k]-bg[k])*(fg[k]-bg[k]);
+  mask[i]=Math.max(0,Math.min(1,projection/direction));
+ }
  const originalText=d.text.trim()||replacementText||'';
- const best=candidateFonts.map(family=>{
-  measure.font=`400 ${fontSize}px "${family}"`;
-  const metrics=measure.measureText(originalText);
-  const width=metrics.width;
-  const inkHeight=(metrics.actualBoundingBoxAscent||fontSize*.75)+(metrics.actualBoundingBoxDescent||fontSize*.2);
-  const widthError=Math.abs(Math.log(Math.max(1,width)/Math.max(1,d.width)));
-  const heightError=Math.abs(Math.log(Math.max(1,inkHeight)/Math.max(1,d.height)));
-  return {family,score:widthError+heightError*.75};
- }).sort((a,b)=>a.score-b.score)[0];
- const t=new IText(replacementText??d.text,{left:d.left,top:d.top-Math.max(0,d.height*.04),fontFamily:best.family,fontWeight:'normal',fontSize,fill:appearance.foreground,stroke:undefined,strokeWidth:0,paintFirst:'fill',editable:true});
- // Width calibration uses the ORIGINAL text, not the replacement length.
- // New letters should extend naturally instead of being compressed into the old box.
- measure.font=`400 ${fontSize}px "${best.family}"`;
- const referenceWidth=measure.measureText(originalText).width;
- if(referenceWidth>0&&d.width>0)t.set({scaleX:Math.max(.75,Math.min(1.25,d.width/referenceWidth))});
+ const test=document.createElement('canvas');test.width=iw;test.height=ih;
+ const testCtx=test.getContext('2d',{willReadFrequently:true})!;
+ let best={family:'Arial',weight:400,fontSize:Math.max(8,d.height),scaleX:1,score:Infinity,top:0};
+ const measure=document.createElement('canvas').getContext('2d')!;
+ for(const family of candidateFonts)for(const weight of [400,500,600,700]){
+  for(const factor of [.9,1,1.1,1.2,1.35]){
+   const fontSize=Math.max(6,d.height*factor);
+   measure.font=`${weight} ${fontSize}px "${family}"`;
+   const metrics=measure.measureText(originalText);
+   const inkHeight=(metrics.actualBoundingBoxAscent||fontSize*.75)+(metrics.actualBoundingBoxDescent||fontSize*.2);
+   const inkWidth=metrics.actualBoundingBoxLeft+metrics.actualBoundingBoxRight||metrics.width;
+   const scaleX=Math.max(.65,Math.min(1.4,d.width/Math.max(1,inkWidth)));
+   const top=(metrics.actualBoundingBoxAscent||fontSize*.75);
+   testCtx.clearRect(0,0,iw,ih);
+   testCtx.save();testCtx.scale(sx*scaleX,sy);
+   testCtx.font=`${weight} ${fontSize}px "${family}"`;
+   testCtx.textBaseline='alphabetic';testCtx.fillStyle='#000';
+   testCtx.fillText(originalText,(metrics.actualBoundingBoxLeft||0),top);
+   testCtx.restore();
+   const rendered=testCtx.getImageData(0,0,iw,ih).data;
+   let error=0,ink=0;
+   // Compare antialiased glyph coverage, including stroke thickness and shapes.
+   for(let i=0;i<mask.length;i+=Math.max(1,Math.floor(mask.length/12000))){
+    const candidate=rendered[i*4+3]/255;
+    error+=Math.abs(mask[i]-candidate);
+    ink+=candidate;
+   }
+   const score=error/Math.max(1,mask.length/Math.max(1,Math.floor(mask.length/12000)))+
+    Math.abs(ink/Math.max(1,mask.length)-appearance.fillRatio)*.1+
+    Math.abs(inkHeight-d.height)/Math.max(1,d.height)*.08;
+   if(score<best.score)best={family,weight,fontSize,scaleX,score,top};
+  }
+ }
+ const t=new IText(replacementText??d.text,{left:d.left,top:d.top-best.fontSize*.18,fontFamily:best.family,fontWeight:best.weight,fontSize:best.fontSize,fill:appearance.foreground,stroke:undefined,strokeWidth:0,paintFirst:'fill',editable:true,scaleX:best.scaleX});
+ setMessage('Matched original text against font shapes and stroke weights. Fine-tune if needed.');
  c.add(t);c.setActiveObject(t);c.requestRenderAll();setSelected(t);setValue(t.text||'');save();return t;
  }
  function addText(d?:Detection){
