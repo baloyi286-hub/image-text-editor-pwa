@@ -213,12 +213,14 @@ export default function App(){
  // Compare actual source letter silhouettes against browser-rendered font candidates.
  // OCR boxes contain ink rather than CSS line boxes; fit glyph ink bounds, not line height.
  const candidateFonts=['Arial','Helvetica','Verdana','Tahoma','Segoe UI','Roboto','Georgia','Times New Roman','Trebuchet MS'];
+ const sourceImage=source.current;
+ if(!sourceImage)throw new Error('Original image unavailable for font matching');
  const imgCanvas=document.createElement('canvas');
- const sx=img.naturalWidth/c.width,sy=img.naturalHeight/c.height;
+ const sx=sourceImage.naturalWidth/c.width,sy=sourceImage.naturalHeight/c.height;
  const iw=Math.max(1,Math.round(d.width*sx)),ih=Math.max(1,Math.round(d.height*sy));
  imgCanvas.width=iw;imgCanvas.height=ih;
  const imageCtx=imgCanvas.getContext('2d',{willReadFrequently:true})!;
- imageCtx.drawImage(img,d.left*sx,d.top*sy,d.width*sx,d.height*sy,0,0,iw,ih);
+ imageCtx.drawImage(sourceImage,d.left*sx,d.top*sy,d.width*sx,d.height*sy,0,0,iw,ih);
  const original=imageCtx.getImageData(0,0,iw,ih).data;
  const bg=appearance.background.match(/[a-f0-9]{2}/gi)!.map(v=>parseInt(v,16));
  const fg=appearance.foreground.match(/[a-f0-9]{2}/gi)!.map(v=>parseInt(v,16));
