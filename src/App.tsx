@@ -213,7 +213,7 @@ export default function App(){
  // Compare actual source letter silhouettes against browser-rendered font candidates.
  // OCR boxes contain ink rather than CSS line boxes; fit glyph ink bounds, not line height.
  const candidateFonts=['Arial','Helvetica','Verdana','Tahoma','Segoe UI','Roboto','Georgia','Times New Roman','Trebuchet MS'];
- const imgCanvas=document.createElement('canvas'),img=source.current!;
+ const imgCanvas=document.createElement('canvas');
  const sx=img.naturalWidth/c.width,sy=img.naturalHeight/c.height;
  const iw=Math.max(1,Math.round(d.width*sx)),ih=Math.max(1,Math.round(d.height*sy));
  imgCanvas.width=iw;imgCanvas.height=ih;
